@@ -77,3 +77,68 @@ def get_required_fields(node, definitions: dict, path: str) -> list[str]:
     out += get_required_fields(node[0], definitions, path + ".[]")
 
   return out
+
+
+def format_rules(settings: dict) -> str:
+
+    s = settings
+    r = []
+
+    if s.get("predefine_primary_keys"):
+      keys = "; ".join(f'"{k}"' for k in s.get("predefine_primary_keys"))
+      r.append(
+          f"this column takes one of a fixed set of names, written exactly as given: {keys}. "
+          f"Create one record per name, in this order. When the agreement provides no such "
+          f"basket, still create the record and leave its other fields empty"
+      )
+
+    if s.get("alphanumeric"):                r.append("letters and digits only")
+    if s.get("max_length"):                  r.append(f"max {s['max_length']} characters")
+    if s.get("date_format"):                 r.append(f"date format is {s['date_format']}")
+    if s.get("number_type"):                 r.append(f"number type is {s['number_type']}")
+    if s.get("min") is not None:             r.append(f"min is {s['min']}")
+    if s.get("max") is not None:             r.append(f"max is {s['max']}")
+    if s.get("allow_negative") is False:     r.append("non-negative")
+    if s.get("allow_spaces") is False:       r.append("remove all spaces")
+
+    return "; ".join(r)
+
+
+def collect_paths(node, path):
+  out = []
+
+  if isinstance(node, str):
+    out.append(path)
+
+  elif isinstance(node, dict):
+    for k, v in node.items():
+      out += collect_paths(v, f"{path}.{k}")
+
+  elif isinstance(node, list) and node:
+    out = collect_paths(node[0], path + ".[]")
+
+  return out
+
+
+def build_field_instruction(node, definitions, path):
+  abs_paths = collect_paths(node, path)
+
+  out = []
+
+  for p in abs_paths:
+    d = definitions.get(p) or {}
+    description = d.get("description")
+    rule = format_rules(d.get("settings") or {})
+    field_name = p.split(".")[-1]
+
+    if rule:
+      rule += f". Format applies to {field_name} field only."
+    elif d.get("data_type") == "options":
+      rule += "Answer with one of the field's options based on the governing clause."
+    else:
+      rule = "Extract the value as described above."
+
+
+    out.append(f"FIELD: {field_name}\n meaning: {description}\n rules: {rule}")
+
+  return "\n\n".join(out)
