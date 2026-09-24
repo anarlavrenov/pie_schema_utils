@@ -1,3 +1,11 @@
+TYPE_MAP = {
+    "string": "string",
+    "number": "number",
+    "boolean": "boolean",
+    "options": "string",
+    "date": "string"
+}
+
 def index_definitions(definition_scheme: list) -> dict:
   return {d["path"]: d for d in definition_scheme if d.get("type") not in ("table", "section")}
 
