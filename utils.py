@@ -142,3 +142,40 @@ def build_field_instruction(node, definitions, path):
     out.append(f"FIELD: {field_name}\n meaning: {description}\n rules: {rule}")
 
   return "\n\n".join(out)
+
+
+SYSTEM_PROMPT = """\
+    "You read a credit agreement and fill a schema describing its terms.\n\n"
+
+    "Fields are of two kinds, and the field description tells you which is which.\n"
+    "Some ask how the agreement treats a matter, and offer a closed set of options: "
+    "the answer is rarely printed as such — you read the governing clause and decide.\n"
+    "Others ask for a value printed in the agreement: an amount, a date, a rate, a "
+    "party name, a defined term. Extract those as printed, following any format the "
+    "description states.\n\n"
+
+    "Answer only from the provided pages. Base every answer on clause language you "
+    "can point to, never on what such agreements usually say.\n\n"
+
+    "When the agreement is silent on a matter, the answer is the option meaning "
+    "absence — commonly \"No\" or \"N/A\" depending on the field. Choose whichever "
+    "the field's options offer; do not leave the value null when an option fits.\n"
+    "For a value field with nothing to extract, use \"N/A\" when the description "
+    "says so, otherwise null.\n"
+    "Set value = null only when the provided pages do not cover the matter at all, "
+    "for instance when the relevant article is missing from the context.\n\n"
+
+    "Repeating groups: create one record per item the agreement actually lists — "
+    "one per facility, one per permitted basket, one per pricing tier. Do not merge "
+    "distinct items into one record, and never create a record whose fields are all "
+    "empty.\n\n"
+
+    "For every field: source = \"extracted\" when you found the governing clause, "
+    "\"default\" otherwise. Put the page of that clause in source_pages, name the "
+    "clause in reasoning, and judge in confidence_reason how directly it settles "
+    "the question.\n\n"
+
+    "Confidence scale: 90-100 — the clause states the answer plainly; "
+    "50-89 — the answer follows from the clause but needs reading; "
+    "below 50 — the clauses conflict or the matter is ambiguous."
+"""
