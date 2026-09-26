@@ -144,38 +144,148 @@ def build_field_instruction(node, definitions, path):
   return "\n\n".join(out)
 
 
-SYSTEM_PROMPT = """\
-    "You read a credit agreement and fill a schema describing its terms.\n\n"
+def flatten_dict(f, path=""):
 
-    "Fields are of two kinds, and the field description tells you which is which.\n"
-    "Some ask how the agreement treats a matter, and offer a closed set of options: "
-    "the answer is rarely printed as such — you read the governing clause and decide.\n"
-    "Others ask for a value printed in the agreement: an amount, a date, a rate, a "
-    "party name, a defined term. Extract those as printed, following any format the "
-    "description states.\n\n"
+  out = {}
 
-    "Answer only from the provided pages. Base every answer on clause language you "
-    "can point to, never on what such agreements usually say.\n\n"
+  if isinstance(f, dict) and "value" in f.keys():
+    out[path] = f["value"]
 
-    "When the agreement is silent on a matter, the answer is the option meaning "
-    "absence — commonly \"No\" or \"N/A\" depending on the field. Choose whichever "
-    "the field's options offer; do not leave the value null when an option fits.\n"
-    "For a value field with nothing to extract, use \"N/A\" when the description "
-    "says so, otherwise null.\n"
-    "Set value = null only when the provided pages do not cover the matter at all, "
-    "for instance when the relevant article is missing from the context.\n\n"
+  elif isinstance(f, dict):
+    for k, v in f.items():
+      out.update(flatten_dict(v, f"{path}.{k}" if path else k))
 
-    "Repeating groups: create one record per item the agreement actually lists — "
-    "one per facility, one per permitted basket, one per pricing tier. Do not merge "
-    "distinct items into one record, and never create a record whose fields are all "
-    "empty.\n\n"
+  elif isinstance(f, list):
+    for i, v in enumerate(f):
+      out.update(flatten_dict(v, f"{path}[{i}]"))
+  return out
 
-    "For every field: source = \"extracted\" when you found the governing clause, "
-    "\"default\" otherwise. Put the page of that clause in source_pages, name the "
-    "clause in reasoning, and judge in confidence_reason how directly it settles "
-    "the question.\n\n"
 
-    "Confidence scale: 90-100 — the clause states the answer plainly; "
-    "50-89 — the answer follows from the clause but needs reading; "
-    "below 50 — the clauses conflict or the matter is ambiguous."
-"""
+def norm_value(v):
+  if v is None:
+    return None
+  s = str(v).strip().replace("$", "").replace(",", "").strip()
+  s = s.replace("\u201c", '"').replace("\u201d", '"')
+  s = s.replace("\u2018", '"').replace("\u2019", '"')
+  s = s.replace("'", '"')
+  s = re.sub(r"\s+", " ", s)
+  s = re.sub(r"^(\d{2})[/\-. ](\d{2})$", r"\1\2", s)
+  if s.lower() in ("null", "none", ""):
+    return None
+
+  try:
+    f = float(s)
+    if math.isfinite(f):
+      return str(int(f)) if f == int(f) else str(f)
+  except ValueError:
+    pass
+
+  return s.casefold()
+
+
+def count_overlap(r_node, g_node):
+  if not isinstance(r_node, dict) or not isinstance(g_node, dict):
+    return 0
+  hits = 0
+  for k, gv in g_node.items():
+    if not isinstance(gv, dict) or "value" not in gv:
+      continue
+    g_val = norm_value(gv.get("value"))
+    if g_val is None:
+      continue
+
+    r_val = norm_value(r_node.get(k, {}).get("value")) if isinstance(r_node.get(k), dict) else None
+    if r_val == g_val:
+      hits += 1
+  return hits
+
+
+def align_by_key(r_node, g_node):
+
+  if isinstance(g_node, list):
+    r_list = r_node if isinstance(r_node, list) else []
+    if not r_list:
+      return [{} for _ in g_node]
+
+    if not g_node:
+      return list(r_list)
+
+    cost = np.zeros((len(g_node), len(r_list)))
+    for i, gr in enumerate(g_node):
+      for j, rr in enumerate(r_list):
+        cost[i][j] = -count_overlap(rr, gr)
+
+    rows, cols = linear_sum_assignment(cost)
+    pairs = {int(i): int(j) for i, j in zip(rows, cols)}
+
+    out = [align_by_key(r_list[pairs[i]], gr) if i in pairs else {}
+            for i, gr in enumerate(g_node)]
+
+    used = set(pairs.values())
+    return out + [r_list[j] for j in range(len(r_list)) if j not in used]
+
+
+  if isinstance(g_node, dict) and "value" not in g_node:
+
+    result = {}
+
+    for k, v in r_node.items():
+      if k in g_node:
+        result[k] = align_by_key(v, g_node[k])
+      else:
+        result[k] = v
+
+    return result
+
+  return r_node
+
+
+def calculate_metrics(r, g, valid):
+
+  missing = 0
+  both_empty = 0
+  exact = 0
+  wrong = 0
+
+  missing_obj = object()
+
+  for k, g_v in g.items():
+
+    r_v = r.get(k, missing_obj)
+
+    if r_v is missing_obj:
+      missing += 1
+
+    else:
+      r_v = norm_value(r_v)
+      g_v = norm_value(g_v)
+
+      ok = valid.get(k)
+      if ok is not None:
+        matched = r_v in ok or (g_v is None and r_v is None)
+      else:
+        matched = r_v == g_v
+
+      if matched:
+        if g_v is None:
+          both_empty += 1
+        else:
+          exact += 1
+
+      else:
+        wrong += 1
+
+  extra = [k for k in set(r) - set(g) if norm_value(r[k]) is not None]
+  accuracy = (exact + both_empty) / len(g)
+  precision = exact / (exact + wrong + len(extra))
+  recall = exact / (exact + wrong + missing)
+  f1_score = 2 * (precision * recall) / max((precision + recall), 1e-9)
+
+  print(f"Accuracy: {accuracy:.2f}")
+  print(f"Precision: {precision:.2f}")
+  print(f"Recall: {recall:.2f}")
+  print(f"F1 score: {f1_score:.2f}")
+
+  print("\n")
+
+  print(f"exact: {exact} | both_empty: {both_empty} | wrong: {wrong} | missing: {missing} | extra: {len(extra)}")
