@@ -1,3 +1,8 @@
+import re
+import numpy as np
+import math
+from scipy.optimize import linear_sum_assignment
+
 def index_definitions(definition_scheme: list) -> dict:
   return {d["path"]: d for d in definition_scheme if d.get("type") not in ("table", "section")}
 
