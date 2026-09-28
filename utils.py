@@ -245,52 +245,51 @@ def align_by_key(r_node, g_node):
   return r_node
 
 
-def calculate_metrics(r, g, valid):
+def calculate_metrics(r, g, valid=None):
+    valid = valid if valid is not None else {}
+    missing = 0
+    both_empty = 0
+    exact = 0
+    wrong = 0
 
-  missing = 0
-  both_empty = 0
-  exact = 0
-  wrong = 0
+    missing_obj = object()
 
-  missing_obj = object()
+    for k, g_v in g.items():
+        r_v = r.get(k, missing_obj)
 
-  for k, g_v in g.items():
+        if r_v is missing_obj:
+            missing += 1
 
-    r_v = r.get(k, missing_obj)
-
-    if r_v is missing_obj:
-      missing += 1
-
-    else:
-      r_v = norm_value(r_v)
-      g_v = norm_value(g_v)
-
-      ok = valid.get(k)
-      if ok is not None:
-        matched = r_v in ok or (g_v is None and r_v is None)
-      else:
-        matched = r_v == g_v
-
-      if matched:
-        if g_v is None:
-          both_empty += 1
         else:
-          exact += 1
+            r_v = norm_value(r_v)
+            g_v = norm_value(g_v)
 
-      else:
-        wrong += 1
+            ok = valid.get(k)
+            if ok is not None:
+                matched = r_v in ok or (g_v is None and r_v is None)
+            else:
+                matched = r_v == g_v
 
-  extra = [k for k in set(r) - set(g) if norm_value(r[k]) is not None]
-  accuracy = (exact + both_empty) / len(g)
-  precision = exact / (exact + wrong + len(extra))
-  recall = exact / (exact + wrong + missing)
-  f1_score = 2 * (precision * recall) / max((precision + recall), 1e-9)
+            if matched:
+                if g_v is None:
+                    both_empty += 1
+                else:
+                    exact += 1
 
-  print(f"Accuracy: {accuracy:.2f}")
-  print(f"Precision: {precision:.2f}")
-  print(f"Recall: {recall:.2f}")
-  print(f"F1 score: {f1_score:.2f}")
+            else:
+                wrong += 1
 
-  print("\n")
+    extra = [k for k in set(r) - set(g) if norm_value(r[k]) is not None]
+    accuracy = (exact + both_empty) / len(g)
+    precision = exact / (exact + wrong + len(extra))
+    recall = exact / (exact + wrong + missing)
+    f1_score = 2 * (precision * recall) / max((precision + recall), 1e-9)
 
-  print(f"exact: {exact} | both_empty: {both_empty} | wrong: {wrong} | missing: {missing} | extra: {len(extra)}")
+    print(f"Accuracy: {accuracy:.2f}")
+    print(f"Precision: {precision:.2f}")
+    print(f"Recall: {recall:.2f}")
+    print(f"F1 score: {f1_score:.2f}")
+
+    print("\n")
+
+    print(f"exact: {exact} | both_empty: {both_empty} | wrong: {wrong} | missing: {missing} | extra: {len(extra)}")
